@@ -1,123 +1,167 @@
-import 'dart:collection';
 import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:drawing_board/src/domain/models/stroke.dart';
+import 'package:drawing_board/src/util/polygon_utils.dart';
 import 'package:drawly_design_system/drawly_design_system.dart';
-import 'polygon_utils.dart';
 
-/// Flood fill algorithm used for [BucketStroke] rendering.
+/// Preenchimento do balde de tinta.
 ///
-/// The algorithm converts every stroke on the canvas into an in-memory pixel
-/// map, then performs a breadth first search starting from [start]. Pixels are
-/// visited using an eight-way neighbourhood so that filled areas look square
-/// instead of "diamond" shaped.
+/// O canvas é tratado como uma grade de `width × height` células. A célula
+/// `(x, y)` cobre o quadrado `[x, x+1) × [y, y+1)` — exatamente o retângulo que
+/// o painter desenha para ela. Cada stroke é rasterizado amostrando o
+/// **centro** da célula, `(x + 0.5, y + 0.5)`, contra a geometria que o
+/// painter pinta:
 ///
-/// [strokes] should contain all strokes currently drawn on the canvas. The
-/// resulting list contains all filled pixel coordinates relative to the logical
-/// [canvasSize].
+/// * contorno (lápis, linha, borracha, formas vazadas): cápsula de raio
+///   `size / 2` em volta de cada segmento — é o que `StrokeCap.round` +
+///   `StrokeJoin.round` produzem;
+/// * formas preenchidas: o interior da forma, sem contorno — o painter usa
+///   `PaintingStyle.fill`, que não tem espessura;
+/// * balde anterior: cada pixel preenchido, sem dilatação.
 ///
-/// The [maxPixels] argument prevents unbounded growth on open canvases.
+/// Amostrar no centro é o que casa o raster com o render anti-aliased: célula
+/// coberta em mais da metade lê como borda, o resto lê como fundo. É isso que
+/// leva o preenchimento até a borda sem fresta e sem invadir o traço.
+///
+/// O preenchimento em si é um flood fill **4-conexo** por scanline a partir de
+/// [start], sobre as células com a mesma cor da célula inicial. A conexão de 4
+/// é deliberada: uma linha fina em diagonal é uma cadeia de células adjacentes
+/// só pela quina, e um fill 8-conexo atravessa essa cadeia.
+///
+/// [backgroundColor] é a cor das células que nenhum stroke pintou e a cor que a
+/// borracha pinta — o mesmo papel que tem no painter. Clique fora do canvas
+/// devolve lista vazia.
 List<Offset> bucketFill({
   required Offset start,
   required List<Stroke> strokes,
   required Size canvasSize,
-  int? maxPixels,
+  Color backgroundColor = const Color(0x00000000),
 }) {
-  // Normalize the starting point to the pixel grid using floor instead of
-  // rounding to avoid shifting the fill by a whole pixel. Rounding caused the
-  // fill to drift down-right when the user tapped near the top or left edge of
-  // a pixel.
-  final startPoint = Offset(start.dx.floorToDouble(), start.dy.floorToDouble());
   final width = canvasSize.width.ceil();
   final height = canvasSize.height.ceil();
-  final pixelLimit = maxPixels ?? width * height;
+  if (width <= 0 || height <= 0) return const [];
 
-  // Build an in-memory pixel map for all strokes. Each line segment is
-  // interpolated so the fill algorithm can rely on continuous borders.
-  final canvasMap = <Offset, Color>{};
-
-  void plotPixel(Offset center, Stroke stroke) {
-    final radius = stroke.size / 2;
-    final bound = radius.ceil();
-    final color = stroke.color.applyOpacity(stroke.opacity);
-
-    for (var dx = -bound; dx <= bound; dx++) {
-      for (var dy = -bound; dy <= bound; dy++) {
-        if (Offset(dx.toDouble(), dy.toDouble()).distance <= radius) {
-          // Floor coordinates so that the generated pixel map aligns with the
-          // bucket fill, which also uses floor when normalizing points. Using
-          // rounding here caused slight offsets between the drawn border and
-          // the computed fill, leaving visible gaps.
-          final p = Offset(
-            (center.dx + dx).floorToDouble(),
-            (center.dy + dy).floorToDouble(),
-          );
-          canvasMap[p] = color;
-        }
-      }
-    }
+  final startX = start.dx.floor();
+  final startY = start.dy.floor();
+  if (startX < 0 || startY < 0 || startX >= width || startY >= height) {
+    return const [];
   }
 
-  bool pointInPolygon(Offset point, List<Offset> polygon) {
-    var inside = false;
-    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      final xi = polygon[i].dx;
-      final yi = polygon[i].dy;
-      final xj = polygon[j].dx;
-      final yj = polygon[j].dy;
-      final intersect = ((yi > point.dy) != (yj > point.dy)) &&
-          (point.dx < (xj - xi) * (point.dy - yi) / (yj - yi + 0.0) + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
+  final raster = _Raster(width, height, backgroundColor.toARGB32());
+  for (final stroke in strokes) {
+    raster.paint(stroke, canvasSize, backgroundColor);
+  }
+  return raster.floodFill(startX, startY);
+}
+
+/// Agrupa [pixels] em faixas horizontais de células consecutivas.
+///
+/// Cada [Rect] devolvido tem altura 1 e cobre `[x0, x1 + 1)` numa linha. Um
+/// preenchimento de dezenas de milhares de pixels vira algumas centenas de
+/// faixas, o que é o que torna viável desenhá-lo em uma única chamada.
+List<Rect> bucketFillRuns(List<Offset> pixels) {
+  final rows = <int, List<int>>{};
+  for (final p in pixels) {
+    (rows[p.dy.floor()] ??= []).add(p.dx.floor());
   }
 
-  Iterable<Offset> expandedPoints(Stroke stroke) {
-    if (stroke is CircleStroke && stroke.points.length >= 2) {
-      final first = stroke.points.first;
-      final last = stroke.points.last;
-      final center = Offset((first.dx + last.dx) / 2, (first.dy + last.dy) / 2);
-
-      final radiusX = (last.dx - first.dx).abs() / 2;
-      final radiusY = (last.dy - first.dy).abs() / 2;
-
-      // Approximate the circumference of the ellipse to decide how many
-      // segments are needed for a smooth outline.
-      final circumference =
-          2 * pi * sqrt((pow(radiusX, 2) + pow(radiusY, 2)) / 2);
-      final segments = max(circumference.ceil(), 12);
-
-      final pts = <Offset>[];
-      for (var i = 0; i <= segments; i++) {
-        final angle = 2 * pi * i / segments;
-        final x = center.dx + radiusX * cos(angle);
-        final y = center.dy + radiusY * sin(angle);
-        pts.add(Offset(x, y));
+  final runs = <Rect>[];
+  for (final y in rows.keys.toList()..sort()) {
+    final xs = rows[y]!..sort();
+    var runStart = xs.first;
+    var previous = runStart;
+    for (var i = 1; i < xs.length; i++) {
+      final x = xs[i];
+      if (x <= previous + 1) {
+        previous = x;
+        continue;
       }
+      runs.add(_run(runStart, previous, y));
+      runStart = x;
+      previous = x;
+    }
+    runs.add(_run(runStart, previous, y));
+  }
+  return runs;
+}
 
+/// O [Path] que o painter desenha para um [BucketStroke]: a união das faixas
+/// de [bucketFillRuns].
+Path bucketFillPath(List<Offset> pixels) {
+  final path = Path();
+  for (final run in bucketFillRuns(pixels)) {
+    path.addRect(run);
+  }
+  return path;
+}
+
+Rect _run(int x0, int x1, int y) => Rect.fromLTWH(
+      x0.toDouble(),
+      y.toDouble(),
+      (x1 - x0 + 1).toDouble(),
+      1,
+    );
+
+/// Raio mínimo de um contorno.
+///
+/// Abaixo de meio pixel o Skia ainda pinta a linha (com cobertura parcial),
+/// mas nenhum centro de célula estaria a menos de `size / 2` dela — o fill
+/// atravessaria uma linha visível. Meio pixel garante que toda linha visível
+/// marque ao menos uma célula por coluna/linha que cruza.
+const double _minRadius = 0.5;
+
+/// Segmentos mais longos que isso são fatiados antes de rasterizar, para que a
+/// caixa envolvente de cada fatia fique pequena. A união das fatias (cada uma
+/// com pontas redondas) é exatamente a cápsula inteira.
+const double _chunkLength = 16;
+
+final class _Raster {
+  _Raster(this.width, this.height, int background)
+      : cells = Uint32List(width * height)
+          ..fillRange(0, width * height, background);
+
+  final int width;
+  final int height;
+
+  /// Cor ARGB de cada célula, em row-major.
+  final Uint32List cells;
+
+  void paint(Stroke stroke, Size canvasSize, Color background) {
+    final argb = stroke is EraserStroke
+        ? background.toARGB32()
+        : stroke.color.applyOpacity(stroke.opacity).toARGB32();
+    final radius = max(stroke.size / 2, _minRadius);
+    final points = stroke.points;
+
+    if (stroke is BucketStroke) {
+      for (final p in stroke.fillPixels) {
+        _set(p.dx.floor(), p.dy.floor(), argb);
+      }
+      return;
+    }
+
+    if (stroke is LineStroke) {
+      if (points.length >= 2) _capsule(points.first, points.last, radius, argb);
+      return;
+    }
+
+    if (stroke is CircleStroke) {
+      if (points.length < 2) return;
+      final rect = Rect.fromPoints(points.first, points.last);
       if (stroke.filled) {
-        for (var x = (center.dx - radiusX).floor();
-            x <= (center.dx + radiusX).ceil();
-            x++) {
-          for (var y = (center.dy - radiusY).floor();
-              y <= (center.dy + radiusY).ceil();
-              y++) {
-            final nx = (x - center.dx) / (radiusX == 0 ? 1 : radiusX);
-            final ny = (y - center.dy) / (radiusY == 0 ? 1 : radiusY);
-            if (nx * nx + ny * ny <= 1) {
-              pts.add(Offset(x.toDouble(), y.toDouble()));
-            }
-          }
-        }
+        _fillEllipse(rect, argb);
+      } else {
+        _polyline(_ellipseOutline(rect), radius, argb);
       }
-
-      return pts;
+      return;
     }
 
-    if (stroke is SquareStroke && stroke.points.length >= 2) {
-      final rect = Rect.fromPoints(stroke.points.first, stroke.points.last);
-      final pts = <Offset>[
+    if (stroke is SquareStroke) {
+      if (points.length < 2) return;
+      final rect = Rect.fromPoints(points.first, points.last);
+      final corners = [
         rect.topLeft,
         rect.topRight,
         rect.bottomRight,
@@ -125,158 +169,227 @@ List<Offset> bucketFill({
         rect.topLeft,
       ];
       if (stroke.filled) {
-        for (var x = rect.left.floor(); x <= rect.right.ceil(); x++) {
-          for (var y = rect.top.floor(); y <= rect.bottom.ceil(); y++) {
-            pts.add(Offset(x.toDouble(), y.toDouble()));
-          }
-        }
+        _fillPolygon(corners, argb);
+      } else {
+        _polyline(corners, radius, argb);
       }
-      return pts;
+      return;
     }
 
-    if (stroke is PolygonStroke && stroke.points.length >= 2) {
-      final first = stroke.points.first;
-      final last = stroke.points.last;
-      final center = Offset((first.dx + last.dx) / 2, (first.dy + last.dy) / 2);
-      final radius = calculateClampedPolygonRadius(
-        firstPoint: first,
-        lastPoint: last,
-        canvasSize: canvasSize,
-      );
-      final pts = <Offset>[];
-      final angleStep = 2 * pi / stroke.sides;
-      const startAngle = -pi / 2;
-      for (var i = 0; i <= stroke.sides; i++) {
-        final angle = startAngle + i * angleStep;
-        final x = center.dx + radius * cos(angle);
-        final y = center.dy + radius * sin(angle);
-        pts.add(Offset(x, y));
-      }
+    if (stroke is PolygonStroke) {
+      if (points.length < 2) return;
+      final vertices = _polygonOutline(stroke, canvasSize);
       if (stroke.filled) {
-        final bounds = Rect.fromPoints(first, last).inflate(radius);
-        for (var x = bounds.left.floor(); x <= bounds.right.ceil(); x++) {
-          for (var y = bounds.top.floor(); y <= bounds.bottom.ceil(); y++) {
-            final p = Offset(x.toDouble(), y.toDouble());
-            if (pointInPolygon(p, pts)) {
-              pts.add(p);
-            }
-          }
-        }
+        _fillPolygon(vertices, argb);
+      } else {
+        _polyline(vertices, radius, argb);
       }
-      return pts;
+      return;
     }
 
-    if (stroke is LineStroke) {
-      return stroke.points;
+    if (stroke is EraserStroke) {
+      // O painter desenha a borracha como um path; um path só com `moveTo`
+      // não tem nada para traçar.
+      if (points.length >= 2) _polyline(points, radius, argb);
+      return;
     }
 
-    return stroke.points;
-  }
-
-  for (final stroke in strokes) {
-    if (stroke is BucketStroke) {
-      for (final p in stroke.fillPixels) {
-        plotPixel(p, stroke);
-      }
-      continue;
-    }
-
-    final points = List<Offset>.from(expandedPoints(stroke));
-    if (points.isEmpty) continue;
-
-    for (var i = 0; i < points.length - 1; i++) {
-      final p1 = points[i];
-      final p2 = points[i + 1];
-      final steps = max((p1 - p2).distance.ceil(), 1);
-      for (var s = 0; s <= steps; s++) {
-        final t = s / steps;
-        final x = p1.dx + (p2.dx - p1.dx) * t;
-        final y = p1.dy + (p2.dy - p1.dy) * t;
-        plotPixel(Offset(x, y), stroke);
-      }
-    }
-
+    // Lápis (e qualquer stroke sem tratamento especial): um ponto vira um
+    // disco, dois ou mais viram um path com pontas e junções redondas.
     if (points.length == 1) {
-      plotPixel(points.first, stroke);
+      _capsule(points.first, points.first, radius, argb);
+    } else {
+      _polyline(points, radius, argb);
     }
   }
 
-  Color? getColor(Offset p) {
-    // Use floor to map arbitrary coordinates onto the pixel grid. This keeps
-    // lookups consistent with the starting point normalization.
-    final normalized = Offset(p.dx.floorToDouble(), p.dy.floorToDouble());
-    return canvasMap[normalized];
-  }
+  /// Flood fill 4-conexo por scanline a partir da célula `(sx, sy)`.
+  List<Offset> floodFill(int sx, int sy) {
+    final target = cells[sy * width + sx];
+    final visited = Uint8List(width * height);
+    final filled = <Offset>[];
+    final seeds = <int>[sy * width + sx];
 
-  bool inBounds(Offset p) =>
-      p.dx >= 0 && p.dy >= 0 && p.dx < width && p.dy < height;
+    bool matches(int index) => visited[index] == 0 && cells[index] == target;
 
-  final baseColor = getColor(startPoint);
-  final visited = <Offset>{};
-  final queue = Queue<Offset>()..add(startPoint);
-  final fill = <Offset>[];
+    while (seeds.isNotEmpty) {
+      final seed = seeds.removeLast();
+      if (!matches(seed)) continue;
 
-  while (queue.isNotEmpty && visited.length < pixelLimit) {
-    final current = queue.removeFirst();
-    final normalized = Offset(
-      current.dx.floorToDouble(),
-      current.dy.floorToDouble(),
-    );
-    // A checagem de limites vem ANTES de contabilizar em `visited`: caso
-    // contrário as coordenadas fora do canvas — que a vizinhança de 8 gera em
-    // toda a borda — consomem o orçamento de `pixelLimit` e o preenchimento
-    // para antes de cobrir a região inteira, deixando uma faixa vazia junto às
-    // bordas.
-    if (!inBounds(normalized)) continue;
-    if (!visited.add(normalized)) continue;
+      final y = seed ~/ width;
+      final row = y * width;
+      var x0 = seed - row;
+      var x1 = x0;
+      while (x0 > 0 && matches(row + x0 - 1)) {
+        x0--;
+      }
+      while (x1 < width - 1 && matches(row + x1 + 1)) {
+        x1++;
+      }
 
-    final color = getColor(normalized);
-    if (baseColor == null && color != null) continue;
-    if (baseColor != null && color != baseColor) continue;
+      for (var x = x0; x <= x1; x++) {
+        visited[row + x] = 1;
+        filled.add(Offset(x.toDouble(), y.toDouble()));
+      }
 
-    fill.add(normalized);
-    canvasMap[normalized] = const Color(0x00000000); // mark as filled
-
-    queue.addAll([
-      Offset(normalized.dx + 1, normalized.dy),
-      Offset(normalized.dx - 1, normalized.dy),
-      Offset(normalized.dx, normalized.dy + 1),
-      Offset(normalized.dx, normalized.dy - 1),
-      Offset(normalized.dx + 1, normalized.dy + 1),
-      Offset(normalized.dx + 1, normalized.dy - 1),
-      Offset(normalized.dx - 1, normalized.dy + 1),
-      Offset(normalized.dx - 1, normalized.dy - 1),
-    ]);
-  }
-  // Expand the fill outward to compensate for aliasing around thick strokes.
-  // Each iteration grows the filled region by one pixel while respecting
-  // existing stroke pixels so that the fill never leaks outside the border.
-  final expanded = <Offset>{...fill};
-  final visitedExpansion = <Offset>{...fill};
-  final maxStrokeSize =
-      strokes.isEmpty ? 0.0 : strokes.map((s) => s.size).reduce(max);
-  final expansionIterations = (maxStrokeSize / 2).ceil();
-
-  var frontier = Set<Offset>.from(fill);
-  for (var i = 0; i < expansionIterations; i++) {
-    final nextFrontier = <Offset>{};
-    for (final p in frontier) {
-      for (var dx = -1; dx <= 1; dx++) {
-        for (var dy = -1; dy <= 1; dy++) {
-          final candidate = Offset(p.dx + dx, p.dy + dy);
-          if (!inBounds(candidate)) continue;
-          if (visitedExpansion.contains(candidate)) continue;
-          if (canvasMap[candidate] != null) continue;
-
-          nextFrontier.add(candidate);
-          visitedExpansion.add(candidate);
+      for (final ny in [y - 1, y + 1]) {
+        if (ny < 0 || ny >= height) continue;
+        final neighbourRow = ny * width;
+        var inRun = false;
+        for (var x = x0; x <= x1; x++) {
+          final match = matches(neighbourRow + x);
+          if (match && !inRun) seeds.add(neighbourRow + x);
+          inRun = match;
         }
       }
     }
-    if (nextFrontier.isEmpty) break;
-    expanded.addAll(nextFrontier);
-    frontier = nextFrontier;
+    return filled;
   }
 
-  return expanded.toList();
+  void _set(int x, int y, int argb) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    cells[y * width + x] = argb;
+  }
+
+  void _polyline(List<Offset> points, double radius, int argb) {
+    for (var i = 0; i < points.length - 1; i++) {
+      _capsule(points[i], points[i + 1], radius, argb);
+    }
+  }
+
+  /// Marca toda célula cujo centro está a até [radius] do segmento `a → b`.
+  void _capsule(Offset a, Offset b, double radius, int argb) {
+    final chunks = max(1, ((b - a).distance / _chunkLength).ceil());
+    for (var i = 0; i < chunks; i++) {
+      _capsuleChunk(
+        Offset.lerp(a, b, i / chunks)!,
+        Offset.lerp(a, b, (i + 1) / chunks)!,
+        radius,
+        argb,
+      );
+    }
+  }
+
+  void _capsuleChunk(Offset a, Offset b, double radius, int argb) {
+    // Célula x tem centro x + 0.5; está a até `radius` do segmento só se
+    // x + 0.5 ∈ [min - radius, max + radius].
+    final minX = max(0, (min(a.dx, b.dx) - radius - 0.5).floor());
+    final maxX = min(width - 1, (max(a.dx, b.dx) + radius - 0.5).ceil());
+    final minY = max(0, (min(a.dy, b.dy) - radius - 0.5).floor());
+    final maxY = min(height - 1, (max(a.dy, b.dy) + radius - 0.5).ceil());
+
+    final abx = b.dx - a.dx;
+    final aby = b.dy - a.dy;
+    final length2 = abx * abx + aby * aby;
+    final radius2 = radius * radius;
+
+    for (var y = minY; y <= maxY; y++) {
+      final cy = y + 0.5;
+      for (var x = minX; x <= maxX; x++) {
+        final cx = x + 0.5;
+        var t = 0.0;
+        if (length2 > 0) {
+          t = (((cx - a.dx) * abx + (cy - a.dy) * aby) / length2).clamp(0, 1);
+        }
+        final dx = cx - (a.dx + t * abx);
+        final dy = cy - (a.dy + t * aby);
+        if (dx * dx + dy * dy <= radius2) cells[y * width + x] = argb;
+      }
+    }
+  }
+
+  /// Marca toda célula cujo centro está dentro da elipse inscrita em [rect].
+  void _fillEllipse(Rect rect, int argb) {
+    final rx = rect.width / 2;
+    final ry = rect.height / 2;
+    if (rx <= 0 || ry <= 0) return;
+    final center = rect.center;
+
+    final minX = max(0, (rect.left - 0.5).ceil());
+    final maxX = min(width - 1, (rect.right - 0.5).floor());
+    final minY = max(0, (rect.top - 0.5).ceil());
+    final maxY = min(height - 1, (rect.bottom - 0.5).floor());
+
+    for (var y = minY; y <= maxY; y++) {
+      final ny = (y + 0.5 - center.dy) / ry;
+      for (var x = minX; x <= maxX; x++) {
+        final nx = (x + 0.5 - center.dx) / rx;
+        if (nx * nx + ny * ny <= 1) cells[y * width + x] = argb;
+      }
+    }
+  }
+
+  /// Marca toda célula cujo centro está dentro do polígono (par-ímpar), por
+  /// scanline. [vertices] pode ou não repetir o primeiro vértice no fim.
+  void _fillPolygon(List<Offset> vertices, int argb) {
+    if (vertices.length < 3) return;
+
+    var top = double.infinity;
+    var bottom = double.negativeInfinity;
+    for (final v in vertices) {
+      top = min(top, v.dy);
+      bottom = max(bottom, v.dy);
+    }
+    final minY = max(0, (top - 0.5).ceil());
+    final maxY = min(height - 1, (bottom - 0.5).floor());
+
+    final crossings = <double>[];
+    for (var y = minY; y <= maxY; y++) {
+      final cy = y + 0.5;
+      crossings.clear();
+      for (var i = 0; i < vertices.length; i++) {
+        final p = vertices[i];
+        final q = vertices[(i + 1) % vertices.length];
+        if ((p.dy <= cy) == (q.dy <= cy)) continue;
+        crossings.add(p.dx + (cy - p.dy) * (q.dx - p.dx) / (q.dy - p.dy));
+      }
+      crossings.sort();
+      for (var i = 0; i + 1 < crossings.length; i += 2) {
+        final x0 = max(0, (crossings[i] - 0.5).ceil());
+        final x1 = min(width - 1, (crossings[i + 1] - 0.5).floor());
+        for (var x = x0; x <= x1; x++) {
+          cells[y * width + x] = argb;
+        }
+      }
+    }
+  }
+
+  /// Contorno da elipse inscrita em [rect], como polilinha fechada com
+  /// segmentos de cerca de um pixel — o erro de corda fica abaixo de 1/8 px.
+  static List<Offset> _ellipseOutline(Rect rect) {
+    final rx = rect.width / 2;
+    final ry = rect.height / 2;
+    final center = rect.center;
+    final perimeter = 2 * pi * sqrt((rx * rx + ry * ry) / 2);
+    final segments = max(perimeter.ceil(), 16);
+    return [
+      for (var i = 0; i <= segments; i++)
+        Offset(
+          center.dx + rx * cos(2 * pi * i / segments),
+          center.dy + ry * sin(2 * pi * i / segments),
+        ),
+    ];
+  }
+
+  /// Vértices do polígono regular, com a mesma fórmula do painter (o primeiro
+  /// vértice repetido no fim fecha o contorno, como faz `path.close()`).
+  static List<Offset> _polygonOutline(PolygonStroke stroke, Size canvasSize) {
+    final first = stroke.points.first;
+    final last = stroke.points.last;
+    final center = Offset((first.dx + last.dx) / 2, (first.dy + last.dy) / 2);
+    final radius = calculateClampedPolygonRadius(
+      firstPoint: first,
+      lastPoint: last,
+      canvasSize: canvasSize,
+    );
+    final angleStep = 2 * pi / stroke.sides;
+    const startAngle = -pi / 2;
+    return [
+      for (var i = 0; i <= stroke.sides; i++)
+        Offset(
+          center.dx + radius * cos(startAngle + i * angleStep),
+          center.dy + radius * sin(startAngle + i * angleStep),
+        ),
+    ];
+  }
 }

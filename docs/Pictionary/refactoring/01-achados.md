@@ -117,24 +117,28 @@ Recomendação: otimista, é o padrão do gênero.
 `time.Now().UnixNano() % len(wordsList)` não é distribuição uniforme, e `wordsList` tem
 exatamente um elemento — `"r"`. As outras 28 palavras estão comentadas.
 
-### R13 · A expansão pós-fill não cobre bordas espessas
-Depois do flood fill, `bucketFill` "cresce" a região preenchida por `maxStrokeSize / 2`
-iterações para compensar o anti-aliasing das bordas. Quatro testes que já existiam no
-repositório — e que nunca rodaram, porque o package não compilava — demonstram que a
-expansão não entrega o prometido:
+### R13 · O balde não casava com o que o painter desenha — ✅ **corrigido**
+A raiz não era a "expansão pós-fill" (que era um no-op: só crescia para células vazias,
+que o BFS já tinha visitado). Era o raster do `bucketFill` descrever uma geometria
+diferente da que o painter pinta:
 
-- `fills area up to thick border without gaps` (borda de 6px)
-- `handles very thick borders` (10px)
-- `no gaps remain next to extremely thick border` (12px)
-- `respects circle border` — este é o oposto: a expansão vaza **para fora** da elipse,
-  e o teste exige contenção estrita
+- amostrava o canto inteiro `(x, y)` em vez do centro `(x + 0.5, y + 0.5)` da célula que
+  o painter desenha — daí a fresta de 1px do lado direito/inferior de toda borda;
+- vizinhança de 8: vazava por qualquer linha fina em diagonal;
+- balde anterior e formas preenchidas eram dilatados por `size / 2`, apesar de o painter
+  desenhá-los sem contorno;
+- `LineStroke` usava o caminho do arrasto, o painter só as extremidades;
+- borracha virava parede em vez de apagar;
+- no render, um `drawRect` por pixel a cada frame (com `shouldRepaint = true`) travava o
+  app em preenchimentos grandes.
 
-Os dois últimos codificam intenções contraditórias: um quer que a expansão cresça mais,
-o outro quer que não cresça nada. O algoritmo precisa de um critério explícito de
-"até onde expandir", e não de um ajuste de constante.
-
-Marcados com `skip:` apontando para este documento. Resolver na fase 3, junto com a
-decisão de R9 — as duas mexem no mesmo pipeline de render.
+Correção: `bucket_fill.dart` reescrito como raster em `Uint32List` amostrado no centro
+da célula, com cada tipo de stroke rasterizado exatamente como o painter o desenha
+(cápsulas de raio `size / 2` para contornos, interior puro para formas preenchidas), flood
+fill 4-conexo por scanline, e `BucketStroke` desenhado como um único `Path` de faixas
+horizontais cacheado por identidade. Os quatro testes pulados foram substituídos por uma
+suíte que deriva o conjunto esperado da geometria; um golden (`bucket_fill_circle`) fixa o
+resultado visual.
 
 ### R14 · `bucketFill` parava antes de preencher a região inteira — ✅ **corrigido**
 A busca em largura contabilizava coordenadas **fora do canvas** contra o orçamento de

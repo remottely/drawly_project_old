@@ -120,6 +120,30 @@ void main() {
       );
     });
 
+    testWidgets('balde dentro de um círculo', (tester) async {
+      // O que o usuário vê ao clicar dentro de uma forma: o interior inteiro
+      // pintado, encostado no contorno, sem fresta e sem vazar para fora.
+      final circle = StrokeFixtures.circle(
+        points: const [Offset(150, 40), Offset(350, 240)],
+      );
+      final bucket = StrokeFixtures.bucket(
+        points: const [Offset(250, 140)],
+        color: AppColors.redAccent,
+        fillPixels: bucketFill(
+          start: const Offset(250, 140),
+          strokes: [circle],
+          canvasSize: DrawingCanvas.logicalSize,
+        ),
+      );
+
+      await tester.pumpWidget(_Harness(strokes: [circle, bucket]));
+
+      await expectLater(
+        find.byType(DrawingCanvas),
+        matchesGoldenFile('goldens/bucket_fill_circle.png'),
+      );
+    });
+
     for (final caso in _shapeCases) {
       testWidgets(caso.description, (tester) async {
         await tester.pumpWidget(
@@ -242,6 +266,67 @@ void main() {
       expect(stroke['strokeType'], StrokeType.bucket.name);
       expect(stroke['fillPixels'], isEmpty);
     });
+
+    testWidgets('o balde aparece na hora, já com os pixels calculados', (
+      tester,
+    ) async {
+      final rxAllStrokes = ValueNotifier<List<Stroke>>([]);
+      await tester.pumpWidget(
+        _Harness(tool: DrawingTool.bucket, rxAllStrokes: rxAllStrokes),
+      );
+
+      await tester.tapAt(tester.getCenter(find.byType(DrawingCanvas)));
+      await tester.pump();
+
+      final bucket = rxAllStrokes.value.single as BucketStroke;
+      final wholeCanvas = DrawingCanvas.logicalSize.width.ceil() *
+          DrawingCanvas.logicalSize.height.ceil();
+      expect(bucket.fillPixels, hasLength(wholeCanvas));
+    });
+
+    testWidgets('o eco do próprio balde não duplica o stroke', (tester) async {
+      final rxAllStrokes = ValueNotifier<List<Stroke>>([]);
+      await tester.pumpWidget(
+        _Harness(tool: DrawingTool.bucket, rxAllStrokes: rxAllStrokes),
+      );
+      await tester.tapAt(tester.getCenter(find.byType(DrawingCanvas)));
+      await tester.pump();
+      final sent = gateway.lastEmittedOn(SocketEvents.drawingStrokeStart)!;
+
+      gateway.emitServerEvent(SocketEvents.drawingStrokeStart, {
+        'stroke': sent['stroke'],
+      });
+      await tester.pump();
+
+      expect(rxAllStrokes.value, hasLength(1));
+      final bucket = rxAllStrokes.value.single as BucketStroke;
+      expect(bucket.fillPixels, isNotEmpty);
+    });
+
+    testWidgets(
+        'o eco do balde preserva o stroke de outro peer que chegou antes',
+        (tester) async {
+      final rxAllStrokes = ValueNotifier<List<Stroke>>([]);
+      await tester.pumpWidget(
+        _Harness(tool: DrawingTool.bucket, rxAllStrokes: rxAllStrokes),
+      );
+      await tester.tapAt(tester.getCenter(find.byType(DrawingCanvas)));
+      await tester.pump();
+      final sent = gateway.lastEmittedOn(SocketEvents.drawingStrokeStart)!;
+
+      gateway
+        ..emitServerEvent(SocketEvents.drawingStrokeStart, {
+          'stroke': StrokeFixtures.normal().toJson(),
+        })
+        ..emitServerEvent(SocketEvents.drawingStrokeStart, {
+          'stroke': sent['stroke'],
+        });
+      await tester.pump();
+
+      expect(rxAllStrokes.value, hasLength(2));
+      expect(rxAllStrokes.value.first, isA<BucketStroke>());
+      expect(rxAllStrokes.value.last, isA<NormalStroke>());
+    });
   });
 
   group('sincronização — eventos do servidor', () {
@@ -274,6 +359,49 @@ void main() {
       await tester.pump();
 
       expect(rxAllStrokes.value, hasLength(1));
+    });
+
+    testWidgets('balde de outro peer chega sem pixels e é preenchido aqui', (
+      tester,
+    ) async {
+      final rxAllStrokes = ValueNotifier<List<Stroke>>([]);
+      await tester.pumpWidget(_Harness(rxAllStrokes: rxAllStrokes));
+
+      gateway.emitServerEvent(SocketEvents.drawingStrokeStart, {
+        'stroke': StrokeFixtures.bucket().toJson(),
+      });
+      await tester.pump();
+
+      final bucket = rxAllStrokes.value.single as BucketStroke;
+      expect(bucket.fillPixels, isNotEmpty);
+    });
+
+    testWidgets('drawing:stroke:all recalcula cada balde contra os anteriores',
+        (
+      tester,
+    ) async {
+      final rxAllStrokes = ValueNotifier<List<Stroke>>([]);
+      await tester.pumpWidget(_Harness(rxAllStrokes: rxAllStrokes));
+      final circle = StrokeFixtures.circle(
+        points: const [Offset(150, 40), Offset(350, 240)],
+      );
+      final insideCircle =
+          StrokeFixtures.bucket(points: const [Offset(250, 140)]);
+
+      gateway.emitServerEvent(SocketEvents.drawingStrokeAll, {
+        'strokes': [circle.toJson(), insideCircle.toJson()],
+      });
+      await tester.pump();
+
+      final bucket = rxAllStrokes.value.last as BucketStroke;
+      final wholeCanvas = DrawingCanvas.logicalSize.width.ceil() *
+          DrawingCanvas.logicalSize.height.ceil();
+      expect(bucket.fillPixels, isNotEmpty);
+      expect(
+        bucket.fillPixels.length,
+        lessThan(wholeCanvas),
+        reason: 'o círculo que veio antes limita o preenchimento',
+      );
     });
 
     testWidgets('drawing:stroke:lastPoints estende o último stroke', (

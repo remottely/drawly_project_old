@@ -11,7 +11,7 @@ Atualize este arquivo ao concluir cada fase.
 |---|---|---|
 | `flutter pub get` na raiz | ❌ falhava (`fluo` inexistente) | ✅ resolve |
 | Testes Go | ❌ 13 arquivos nunca compilaram | ✅ compilam e rodam |
-| Testes `drawing_board` | ❌ package não compilava | ✅ 85 passando, 4 skip documentados |
+| Testes `drawing_board` | ❌ package não compilava | ✅ 110 passando, 0 skip |
 | Testes `drawly_core` | 2 arquivos, 11 testes | ✅ 49 testes |
 | Testes `drawly_design_system` | 2 testes | ✅ 21 testes |
 | Testes do app | 3 arquivos, socket real | ✅ 34 testes, sem rede |
@@ -29,7 +29,7 @@ Atualize este arquivo ao concluir cada fase.
 | Módulo | Atual | Piso | Meta |
 |---|---|---|---|
 | `drawly_core` | 60,3% | 60% | 90% |
-| `drawing_board` | 60,2% | 60% | 90% |
+| `drawing_board` | 68,1% | 60% | 90% |
 | `drawly_design_system` | 42,3% | 40% | 60% |
 | app | 36,2% | 35% | 85% |
 | `backend-go` | 51,1% | 50% | 80% |
@@ -51,6 +51,7 @@ O que falta para chegar às metas:
 | R6 | `Timer.periodic` do canvas nunca cancelado | `flutter_test`: *"A Timer is still pending…"* |
 | R8 | `emitWithAck` segurava um timer por 10s mesmo em sucesso | reescrita do `SocketManager` |
 | R14 | `bucketFill` parava antes de preencher tudo | teste que já existia e nunca havia rodado |
+| R13 | balde com fresta/vazamento na borda e render que travava | raster amostrado no centro da célula + golden `bucket_fill_circle` |
 
 ## Bugs conhecidos e ainda abertos
 
@@ -66,7 +67,6 @@ Cada um tem teste que o demonstra, marcado com `skip:` apontando para
 | R9 | o desenhista não vê o próprio traço | 3.1 |
 | R10 | `chooseRandomWord` não é aleatório e tem 1 palavra | 4.1 |
 | R11/R12 | cliente cria sala; UI de debug em release | 3.1 |
-| R13 | expansão do balde não cobre bordas espessas | 3.1 |
 | A7 | `copyWith(icon: null)` não limpa o campo | 3.3 |
 
 ## Costuras criadas (fase 1)

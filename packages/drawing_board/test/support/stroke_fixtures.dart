@@ -81,11 +81,12 @@ abstract final class StrokeFixtures {
   static BucketStroke bucket({
     List<Offset>? points,
     List<Offset> fillPixels = const [],
+    Color? color,
   }) =>
       BucketStroke(
         points: _growable(points ?? const [Offset(20, 20)]),
         fillPixels: fillPixels,
-        color: color,
+        color: color ?? StrokeFixtures.color,
         size: size,
         opacity: opacity,
       );
