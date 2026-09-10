@@ -36,6 +36,8 @@ distribuída entre cliente e servidor, essa aposta se perde.
 
 Detalhe dos problemas encontrados: [01-achados.md](01-achados.md).
 Desenho do estado final: [08-arquitetura-alvo.md](08-arquitetura-alvo.md).
+Plano do sistema de desenho (protocolo, modelo, render): [10-sistema-de-desenho.md](10-sistema-de-desenho.md); etapas seguintes em [11-desenho-etapas-seguintes.md](11-desenho-etapas-seguintes.md),
+ciclo do turno em [12-ciclo-do-turno.md](12-ciclo-do-turno.md) e operação/custo em [13-operacao-e-custo.md](13-operacao-e-custo.md).
 **Onde estamos agora: [09-estado-atual.md](09-estado-atual.md).**
 
 ## Regras de execução
