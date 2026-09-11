@@ -3,8 +3,6 @@ package main
 import (
 	"testing"
 	"time"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // withShortGraceDelay encurta a tolerância de reconexão durante o teste.
@@ -34,7 +32,7 @@ func TestDisconnectMarksParticipantOffline(t *testing.T) {
 	roomDrawings["room"] = &Drawing{}
 	roomUsers["c1"] = &RoomUser{RoomName: "room", UserId: "u1", Username: "one"}
 
-	disconnectParticipant(socket.NewServer(nil, nil), "c1")
+	disconnectParticipant(fakeBroadcaster{}, "c1")
 
 	withState(func() {
 		if _, exists := roomUsers["c1"]; exists {
@@ -64,7 +62,7 @@ func TestDisconnectRemovesParticipantAfterGracePeriod(t *testing.T) {
 	roomDrawings["room"] = &Drawing{}
 	roomUsers["c1"] = &RoomUser{RoomName: "room", UserId: "u1", Username: "one"}
 
-	disconnectParticipant(socket.NewServer(nil, nil), "c1")
+	disconnectParticipant(fakeBroadcaster{}, "c1")
 
 	// A leitura passa pelo mesmo lock que o callback do timer usa: o estado é
 	// compartilhado entre a goroutine do teste e a do time.AfterFunc.
@@ -104,7 +102,7 @@ func TestDisconnectKeepsParticipantWhenReconnected(t *testing.T) {
 	roomDrawings["room"] = &Drawing{}
 	roomUsers["c1"] = &RoomUser{RoomName: "room", UserId: "u1", Username: "one"}
 
-	disconnectParticipant(socket.NewServer(nil, nil), "c1")
+	disconnectParticipant(fakeBroadcaster{}, "c1")
 
 	// Reconexão: é isso que o handleJoinRoom faz ao reencontrar o participante —
 	// e, como ele, sob o lock do estado.
@@ -125,7 +123,7 @@ func TestDisconnectIsNoOpForUnknownClient(t *testing.T) {
 	resetGlobalState()
 	withShortGraceDelay(t, veryLongDelay)
 
-	disconnectParticipant(socket.NewServer(nil, nil), "cliente-desconhecido")
+	disconnectParticipant(fakeBroadcaster{}, "cliente-desconhecido")
 
 	withState(func() {
 		if len(rooms) != 0 || len(roomUsers) != 0 {

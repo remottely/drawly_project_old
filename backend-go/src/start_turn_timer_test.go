@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // TestStartTurnTimerInitializesState verifies that calling startTurnTimer
@@ -22,7 +20,7 @@ func TestStartTurnTimerInitializesState(t *testing.T) {
 	rooms["room"] = r
 	roomDrawings["room"] = &Drawing{}
 
-	io := &socket.Server{}
+	io := fakeBroadcaster{}
 	startTurnTimer(io, "room", 1)
 
 	if r.ActiveTimer == nil {

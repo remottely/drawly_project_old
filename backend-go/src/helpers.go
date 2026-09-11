@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/labstack/gommon/log"
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // Requer stateMu.
@@ -14,7 +13,7 @@ func cancelActiveTimer(room *Room) {
 }
 
 // Requer stateMu.
-func validateCurrentDrawer(io *socket.Server, room *Room, roomName string) *Participant {
+func validateCurrentDrawer(io Broadcaster, room *Room, roomName string) *Participant {
 	currentDrawer := room.getCurrentDrawer()
 	if currentDrawer == nil {
 		logInfo("Não há participantes conectados na sala %s.", roomName)

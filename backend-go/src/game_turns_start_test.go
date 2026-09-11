@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // TestHandleGameTurnsStartNotEnoughPlayers ensures the game does not start when player count is below minimum.
@@ -17,8 +15,8 @@ func TestHandleGameTurnsStartNotEnoughPlayers(t *testing.T) {
 	rooms["room"] = r
 	roomDrawings["room"] = &Drawing{}
 
-	io := &socket.Server{}
-	client := &socket.Socket{}
+	io := fakeBroadcaster{}
+	client := &fakeClientConn{}
 
 	handleGameTurnsStart(io, client, map[string]any{"roomName": "room"})
 
@@ -43,8 +41,8 @@ func TestHandleGameTurnsStartStartsGame(t *testing.T) {
 	rooms["room"] = r
 	roomDrawings["room"] = &Drawing{}
 
-	io := &socket.Server{}
-	client := &socket.Socket{}
+	io := fakeBroadcaster{}
+	client := &fakeClientConn{}
 
 	handleGameTurnsStart(io, client, map[string]any{"roomName": "room"})
 

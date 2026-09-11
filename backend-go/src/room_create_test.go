@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // TestCreateRoomAddsEntries verifies that createRoom initializes room and drawing maps only once.
@@ -11,8 +9,8 @@ func TestCreateRoomAddsEntries(t *testing.T) {
 	rooms = map[string]*Room{}
 	roomDrawings = map[string]*Drawing{}
 
-	io := &socket.Server{}
-	client := &socket.Socket{}
+	io := fakeBroadcaster{}
+	client := &fakeClientConn{}
 
 	createRoom(io, client, "room")
 

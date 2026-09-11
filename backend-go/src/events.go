@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"time"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 const (
@@ -12,7 +10,7 @@ const (
 	MaxPlayers = 4
 )
 
-func handleConnection(io *socket.Server, client *socket.Socket) {
+func handleConnection(io Broadcaster, client ClientConn) {
 
 	// Evento: Criar Sala
 	client.On(EventRoomCreate, func(args ...interface{}) {
@@ -80,7 +78,7 @@ func handleConnection(io *socket.Server, client *socket.Socket) {
 	})
 
 	// client.On(EventDisconnect, func(...any) {
-	// 	logInfo("Client disconnected: %s", string(client.Id()))
+	// 	logInfo("Client disconnected: %s", client.ID())
 	// })
 
 	// client.On(EventError, func(data any) {
@@ -88,7 +86,7 @@ func handleConnection(io *socket.Server, client *socket.Socket) {
 	// })
 }
 
-func handleCreateRoom(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleCreateRoom(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -101,7 +99,7 @@ func handleCreateRoom(io *socket.Server, client *socket.Socket, args ...interfac
 	}
 }
 
-func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleJoinRoom(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -141,8 +139,8 @@ func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{
 		if alreadyInRoom {
 			participant.IsConnected = true
 
-			client.Join(socket.Room(roomName))
-			roomUsers[string(client.Id())] = &RoomUser{
+			client.Join(roomName)
+			roomUsers[client.ID()] = &RoomUser{
 				RoomName:   roomName,
 				UserId:     userId,
 				Username:   username,
@@ -156,7 +154,7 @@ func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{
 				emitDrawingState(io, roomName, drawing)
 			}
 
-			io.To(socket.Room(roomName)).Emit(EventRoomParticipantsUpdate, map[string]interface{}{
+			io.ToRoom(roomName, EventRoomParticipantsUpdate, map[string]interface{}{
 				"participants": room.getParticipants(),
 			})
 
@@ -188,8 +186,8 @@ func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{
 				}
 
 				room.addParticipant(participant)
-				client.Join(socket.Room(roomName))
-				roomUsers[string(client.Id())] = &RoomUser{
+				client.Join(roomName)
+				roomUsers[client.ID()] = &RoomUser{
 					RoomName:   roomName,
 					UserId:     userId,
 					Username:   username,
@@ -203,7 +201,7 @@ func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{
 					emitDrawingState(io, roomName, drawing)
 				}
 
-				io.To(socket.Room(roomName)).Emit(EventRoomParticipantsUpdate, map[string]interface{}{
+				io.ToRoom(roomName, EventRoomParticipantsUpdate, map[string]interface{}{
 					"participants": room.getParticipants(),
 				})
 
@@ -232,7 +230,7 @@ func handleJoinRoom(io *socket.Server, client *socket.Socket, args ...interface{
 	}
 }
 
-func handleLeaveRoom(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleLeaveRoom(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -248,11 +246,11 @@ func handleLeaveRoom(io *socket.Server, client *socket.Socket, args ...interface
 
 		if room, exists := rooms[roomName]; exists {
 			room.removeParticipant(userId)
-			client.Leave(socket.Room(roomName))
-			delete(roomUsers, string(client.Id()))
+			client.Leave(roomName)
+			delete(roomUsers, client.ID())
 
 			// Atualiza os participantes na sala
-			io.To(socket.Room(roomName)).Emit(EventRoomParticipantsUpdate, map[string]interface{}{
+			io.ToRoom(roomName, EventRoomParticipantsUpdate, map[string]interface{}{
 				"participants": room.getParticipants(),
 			})
 
@@ -267,7 +265,7 @@ func handleLeaveRoom(io *socket.Server, client *socket.Socket, args ...interface
 	}
 }
 
-func handleStartStrokeDrawing(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleStartStrokeDrawing(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -293,11 +291,11 @@ func handleStartStrokeDrawing(io *socket.Server, client *socket.Socket, args ...
 
 	if drawing, exists := roomDrawings[roomName]; exists {
 		drawing.addStroke(stroke)
-		io.To(socket.Room(roomName)).Emit(EventDrawingStrokeStart, map[string]interface{}{"stroke": rawStroke})
+		io.ToRoom(roomName, EventDrawingStrokeStart, map[string]interface{}{"stroke": rawStroke})
 	}
 }
 
-func handleLastPointsStrokeDrawing(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleLastPointsStrokeDrawing(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -325,14 +323,14 @@ func handleLastPointsStrokeDrawing(io *socket.Server, client *socket.Socket, arg
 
 		if drawing, exists := roomDrawings[roomName]; exists {
 			drawing.addStrokeLastPoints(points)
-			io.To(socket.Room(roomName)).Emit(EventDrawingStrokeLastPoints, map[string]interface{}{
+			io.ToRoom(roomName, EventDrawingStrokeLastPoints, map[string]interface{}{
 				"strokeLastPoints": rawPoints,
 			})
 		}
 	}
 }
 
-func handleClearDrawing(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleClearDrawing(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -347,12 +345,12 @@ func handleClearDrawing(io *socket.Server, client *socket.Socket, args ...interf
 
 		if drawing, exists := roomDrawings[roomName]; exists {
 			drawing.clear()
-			io.To(socket.Room(roomName)).Emit(EventDrawingClear)
+			io.ToRoom(roomName, EventDrawingClear, nil)
 		}
 	}
 }
 
-func handleUndoDrawing(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleUndoDrawing(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -367,14 +365,14 @@ func handleUndoDrawing(io *socket.Server, client *socket.Socket, args ...interfa
 
 		if drawing, exists := roomDrawings[roomName]; exists {
 			lastStroke := drawing.undo()
-			io.To(socket.Room(roomName)).Emit(EventDrawingUndo, map[string]interface{}{
+			io.ToRoom(roomName, EventDrawingUndo, map[string]interface{}{
 				"stroke": lastStroke,
 			})
 		}
 	}
 }
 
-func handleRedoDrawing(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleRedoDrawing(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -389,14 +387,14 @@ func handleRedoDrawing(io *socket.Server, client *socket.Socket, args ...interfa
 
 		if drawing, exists := roomDrawings[roomName]; exists {
 			lastStroke := drawing.redo()
-			io.To(socket.Room(roomName)).Emit(EventDrawingRedo, map[string]interface{}{
+			io.ToRoom(roomName, EventDrawingRedo, map[string]interface{}{
 				"stroke": lastStroke,
 			})
 		}
 	}
 }
 
-func handleMessageChat(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleMessageChat(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -417,11 +415,11 @@ func handleMessageChat(io *socket.Server, client *socket.Socket, args ...interfa
 			Text:     data["text"].(string),
 		}
 
-		io.To(socket.Room(roomName)).Emit(EventChatMessage, message)
+		io.ToRoom(roomName, EventChatMessage, message)
 	}
 }
 
-func handleGuessAnswerChat(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleGuessAnswerChat(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -466,7 +464,7 @@ func handleGuessAnswerChat(io *socket.Server, client *socket.Socket, args ...int
 			IsCorrect: isCorrect,
 		}
 
-		io.To(socket.Room(roomName)).Emit(EventChatAnswerResult, answer)
+		io.ToRoom(roomName, EventChatAnswerResult, answer)
 
 		if isCorrect {
 			participant := room.Participants[userId]
@@ -506,7 +504,7 @@ func handleGuessAnswerChat(io *socket.Server, client *socket.Socket, args ...int
 	}
 }
 
-func handleGameTurnsStart(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleGameTurnsStart(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -538,13 +536,13 @@ func handleGameTurnsStart(io *socket.Server, client *socket.Socket, args ...inte
 // being removed from the room. It is a variable so tests can shorten it.
 var disconnectGraceDelay = 5 * time.Second
 
-func handleParticipantDisconnect(io *socket.Server, client *socket.Socket) {
-	disconnectParticipant(io, string(client.Id()))
+func handleParticipantDisconnect(io Broadcaster, client ClientConn) {
+	disconnectParticipant(io, client.ID())
 }
 
 // disconnectParticipant holds the disconnect logic keyed by client id, so it
-// can be exercised without constructing a real *socket.Socket.
-func disconnectParticipant(io *socket.Server, clientID string) {
+// can be exercised without a real ClientConn.
+func disconnectParticipant(io Broadcaster, clientID string) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
@@ -564,7 +562,7 @@ func disconnectParticipant(io *socket.Server, clientID string) {
 
 		// Emite mensagem para a sala sobre a saída do participante
 		icon := "info"
-		io.To(socket.Room(userInfo.RoomName)).Emit(EventChatMessage, Message{
+		io.ToRoom(userInfo.RoomName, EventChatMessage, Message{
 			Icon:     &icon,
 			UserId:   participant.UserId,
 			Username: participant.Username,
@@ -587,7 +585,7 @@ func disconnectParticipant(io *socket.Server, clientID string) {
 					}
 
 					// Atualiza o estado do jogo
-					io.To(socket.Room(room.Name)).Emit(EventRoomParticipantsUpdate, map[string]interface{}{
+					io.ToRoom(room.Name, EventRoomParticipantsUpdate, map[string]interface{}{
 						"participants": room.getParticipants(),
 					})
 
@@ -605,7 +603,7 @@ func disconnectParticipant(io *socket.Server, clientID string) {
 	delete(roomUsers, clientID) // Remove o usuário do mapa global
 }
 
-func handleGameRanking(io *socket.Server, client *socket.Socket, args ...interface{}) {
+func handleGameRanking(io Broadcaster, client ClientConn, args ...interface{}) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 

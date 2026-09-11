@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/zishang520/socket.io/v2/socket"
 	"testing"
 )
 
@@ -14,7 +13,7 @@ func TestHandleClearDrawing(t *testing.T) {
 	d.addStroke(Stroke{Points: []Offset{{Dx: 0, Dy: 0}}})
 	roomDrawings["room"] = d
 
-	handleClearDrawing(&socket.Server{}, &socket.Socket{}, map[string]any{"roomName": "room"})
+	handleClearDrawing(fakeBroadcaster{}, &fakeClientConn{}, map[string]any{"roomName": "room"})
 	if len(d.Strokes) != 0 {
 		t.Fatalf("expected drawing to be cleared")
 	}
@@ -30,12 +29,12 @@ func TestHandleUndoRedoDrawing(t *testing.T) {
 	d.addStroke(stroke)
 	roomDrawings["room"] = d
 
-	handleUndoDrawing(&socket.Server{}, &socket.Socket{}, map[string]any{"roomName": "room"})
+	handleUndoDrawing(fakeBroadcaster{}, &fakeClientConn{}, map[string]any{"roomName": "room"})
 	if len(d.Strokes) != 0 || len(d.BackupStrokes) != 1 {
 		t.Fatalf("undo should move stroke to backup")
 	}
 
-	handleRedoDrawing(&socket.Server{}, &socket.Socket{}, map[string]any{"roomName": "room"})
+	handleRedoDrawing(fakeBroadcaster{}, &fakeClientConn{}, map[string]any{"roomName": "room"})
 	if len(d.Strokes) != 1 || len(d.BackupStrokes) != 0 {
 		t.Fatalf("redo should restore stroke from backup")
 	}
@@ -57,7 +56,7 @@ func TestHandleGuessAnswerChatAdvancesTurn(t *testing.T) {
 	rooms["room"] = r
 	roomDrawings["room"] = &Drawing{}
 
-	handleGuessAnswerChat(&socket.Server{}, &socket.Socket{}, map[string]any{
+	handleGuessAnswerChat(fakeBroadcaster{}, &fakeClientConn{}, map[string]any{
 		"roomName": "room",
 		"userId":   "u1",
 		"username": "user",

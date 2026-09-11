@@ -1,7 +1,5 @@
 package main
 
-import "github.com/zishang520/socket.io/v2/socket"
-
 var (
 	rooms        = make(map[string]*Room)
 	roomDrawings = make(map[string]*Drawing)
@@ -19,7 +17,7 @@ func newRoom(name string) *Room {
 // createRoom registra uma sala nova, se ainda não existir.
 //
 // Requer stateMu.
-func createRoom(io *socket.Server, client *socket.Socket, roomName string) {
+func createRoom(io Broadcaster, client ClientConn, roomName string) {
 	if _, exists := rooms[roomName]; !exists {
 		rooms[roomName] = newRoom(roomName)
 		roomDrawings[roomName] = &Drawing{}

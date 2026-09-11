@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 // TestValidateCurrentDrawerReturnsDrawer ensures the current drawer is returned
@@ -14,7 +12,7 @@ func TestValidateCurrentDrawerReturnsDrawer(t *testing.T) {
 	room.addParticipant(p)
 	room.CurrentDrawerTurnIndex = 0
 
-	srv := &socket.Server{}
+	srv := fakeBroadcaster{}
 	got := validateCurrentDrawer(srv, room, room.Name)
 	if got != p {
 		t.Fatalf("expected %v, got %v", p, got)
@@ -26,7 +24,7 @@ func TestValidateCurrentDrawerReturnsDrawer(t *testing.T) {
 func TestValidateCurrentDrawerNoDrawer(t *testing.T) {
 	room := newRoom("a")
 
-	srv := &socket.Server{}
+	srv := fakeBroadcaster{}
 	got := validateCurrentDrawer(srv, room, room.Name)
 	if got != nil {
 		t.Fatalf("expected nil, got %v", got)

@@ -27,3 +27,23 @@ func participantWithScore(userID string, score uint16) *Participant {
 		Score:       score,
 	}
 }
+
+// fakeBroadcaster e fakeClientConn substituem o socket.io real nos testes de
+// handler: a regra de jogo fica testável sem abrir um socket, e sem depender
+// de um *socket.Server/*socket.Socket real inicializado. Só main.go conhece a
+// lib socket.io de verdade (via serverBroadcaster/socketClientConn).
+type fakeBroadcaster struct{}
+
+func (fakeBroadcaster) ToRoom(room, event string, payload any)       {}
+func (fakeBroadcaster) ToClient(clientID, event string, payload any) {}
+func (fakeBroadcaster) EmitAll(event string, payload any)            {}
+
+type fakeClientConn struct {
+	id string
+}
+
+func (c *fakeClientConn) ID() string                                         { return c.id }
+func (c *fakeClientConn) Emit(event string, payload any)                     {}
+func (c *fakeClientConn) Join(room string)                                   {}
+func (c *fakeClientConn) Leave(room string)                                  {}
+func (c *fakeClientConn) On(event string, handler func(args ...interface{})) {}
