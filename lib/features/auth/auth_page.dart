@@ -6,6 +6,7 @@ import 'package:drawly/core/widgets/session_pick_avatar.dart';
 import 'package:drawly/features/draw_game/draw_game_room_selection_page.dart';
 import 'package:drawly_design_system/drawly_design_system.dart';
 import 'package:flutter/material.dart' hide BoxDecoration, BoxShadow;
+
 // import 'package:flutter_inset_box_shadow/flutter_inset_box_shadow.dart';
 
 class AuthPage extends StatelessWidget {

@@ -2,23 +2,22 @@ package main
 
 import (
 	"sort"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
-func emitRoomList(io *socket.Server) {
-	io.Emit("room:all", map[string]any{
+// Requer stateMu.
+func emitRoomList(io Broadcaster) {
+	io.EmitAll(EventRoomAll, map[string]any{
 		"allRooms": getRoomNames(),
 	})
 }
 
-func emitDrawingState(io *socket.Server, roomName string, drawing *Drawing) {
-	io.To(socket.Room(roomName)).Emit("drawing:stroke:all", map[string]interface{}{
+func emitDrawingState(io Broadcaster, roomName string, drawing *Drawing) {
+	io.ToRoom(roomName, EventDrawingStrokeAll, map[string]interface{}{
 		"strokes": drawing.Strokes,
 	})
 }
 
-func emitJoinMessage(io *socket.Server, roomName, userId, username string) {
+func emitJoinMessage(io Broadcaster, roomName, userId, username string) {
 	icon := "info"
 	message := Message{
 		Icon:     &icon,
@@ -26,17 +25,18 @@ func emitJoinMessage(io *socket.Server, roomName, userId, username string) {
 		Username: username,
 		Text:     "entrou",
 	}
-	io.To(socket.Room(roomName)).Emit("chat:message", message)
+	io.ToRoom(roomName, EventChatMessage, message)
 }
 
-func emitRoomError(io *socket.Server, roomName string, message string, action ErrorActionType) {
-	io.To(socket.Room(roomName)).Emit("error", ErrorDTO{
+func emitRoomError(io Broadcaster, roomName string, message string, action ErrorActionType) {
+	io.ToRoom(roomName, EventError, ErrorDTO{
 		Message: message,
 		Action:  action,
 	})
 }
 
-func emitRanking(io *socket.Server, roomName string) {
+// Requer stateMu.
+func emitRanking(io Broadcaster, roomName string) {
 	room, exists := rooms[roomName]
 	if !exists {
 		return
@@ -58,7 +58,7 @@ func emitRanking(io *socket.Server, roomName string) {
 		return ranking[i]["score"].(uint16) > ranking[j]["score"].(uint16)
 	})
 
-	io.To(socket.Room(roomName)).Emit("game:ranking", map[string]any{
+	io.ToRoom(roomName, EventGameRanking, map[string]any{
 		"ranking": ranking,
 	})
 }

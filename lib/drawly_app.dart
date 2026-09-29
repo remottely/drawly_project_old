@@ -27,7 +27,7 @@ class _DrawlyAppState extends State<DrawlyApp> {
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent('error', _onErrorEvent);
+    SocketManager.instance.off(SocketEvents.error, _onErrorEvent);
     super.dispose();
   }
 
@@ -42,7 +42,7 @@ class _DrawlyAppState extends State<DrawlyApp> {
     _onErrorEvent = (data) {
       rxError.value = ErrorDTO.fromJson(data as Map<String, dynamic>);
     };
-    SocketManager.instance.onEvent('error', _onErrorEvent);
+    SocketManager.instance.on(SocketEvents.error, _onErrorEvent);
   }
 
   @override

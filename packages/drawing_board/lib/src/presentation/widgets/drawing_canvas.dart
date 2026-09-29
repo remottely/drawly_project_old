@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:developer' as developer;
 import 'dart:math';
 
@@ -7,10 +6,15 @@ import 'package:drawing_board/src/src.dart';
 import 'package:drawly_core/drawly_core.dart';
 import 'package:drawly_design_system/drawly_design_system.dart';
 import 'package:flutter/material.dart';
-import '../../util/bucket_fill.dart';
 import '../../util/polygon_utils.dart';
 
 const double _canvasSize = 500;
+
+/// Cache do [Path] de cada [BucketStroke], por identidade.
+///
+/// `BucketStroke.fillPixels` é imutável, então o path derivado vale enquanto o
+/// stroke existir — e some com ele, sem precisar de invalidação.
+final _bucketFillPaths = Expando<Path>('bucketFillPath');
 
 class DrawingCanvas extends StatefulWidget {
   const DrawingCanvas({
@@ -32,6 +36,12 @@ class DrawingCanvas extends StatefulWidget {
           'The roomName must be at least 3 characters long',
         );
 
+  /// Tamanho lógico do canvas, em unidades de desenho (16:9).
+  ///
+  /// Todo stroke é expresso nessas unidades; a tela só aplica um
+  /// `Transform.scale` por cima. É também a grade do balde de tinta.
+  static const Size logicalSize = Size(_canvasSize, _canvasSize / (16 / 9));
+
   final ValueNotifier<List<Stroke>> rxAllStrokes;
   // final ValueNotifier<ui.Image?>? rxBackgroundImage;
   final CurrentStrokeValueNotifier rxCurrentStroke;
@@ -51,7 +61,22 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
 
   final int _bufferDelay = 50;
   List<Offset> _pendingPoints = [];
-  bool _awaitingBucketAck = false;
+
+  /// Baldes aplicados localmente cujo eco do servidor ainda não chegou.
+  ///
+  /// O balde é desenhado na hora (com os pixels já calculados) e enviado sem
+  /// eles. Quando o eco volta, é reconhecido pelos campos que atravessam a
+  /// rede e descartado — o stroke local já está na lista, na posição certa.
+  /// Remover "o último" ao receber o eco removia o stroke de outro peer que
+  /// tivesse chegado no meio tempo.
+  final _pendingBuckets = <BucketStroke>[];
+
+  /// Timer que esvazia o buffer de pontos periodicamente.
+  ///
+  /// Guardado em campo para poder ser cancelado no [dispose]: sem isso cada
+  /// instância do canvas deixava um timer vivo para sempre, emitindo no socket
+  /// mesmo depois de a tela sair.
+  Timer? _pointsBufferTimer;
 
   final rxIsShowGrid = ValueNotifier<bool>(false);
   Color get strokeColor => widget.options.strokeColor;
@@ -73,13 +98,15 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent('connect', _onConnectEvent);
+    _pointsBufferTimer?.cancel();
+    _pointsBufferTimer = null;
+    SocketManager.instance.off(SocketEvents.connect, _onConnectEvent);
     SocketManager.instance
-        .offEvent('drawing:stroke:all', _onAllStrokesDrawingEvent);
+        .off(SocketEvents.drawingStrokeAll, _onAllStrokesDrawingEvent);
     SocketManager.instance
-        .offEvent('drawing:stroke:start', _onStrokeStartDrawingEvent);
-    SocketManager.instance
-        .offEvent('drawing:stroke:lastPoints', _onStrokeLastPointsDrawingEvent);
+        .off(SocketEvents.drawingStrokeStart, _onStrokeStartDrawingEvent);
+    SocketManager.instance.off(
+        SocketEvents.drawingStrokeLastPoints, _onStrokeLastPointsDrawingEvent);
     super.dispose();
   }
 
@@ -97,15 +124,7 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
           final stroke = Stroke.fromJson(
             Map<String, dynamic>.from(raw as Map<String, dynamic>),
           );
-          if (stroke is BucketStroke && stroke.fillPixels.isEmpty) {
-            const canvasSize = Size(_canvasSize, _canvasSize / (16 / 9));
-            stroke.fillPixels = bucketFill(
-              start: stroke.points.first,
-              strokes: List<Stroke>.from(parsedStrokes),
-              canvasSize: canvasSize,
-            );
-          }
-          parsedStrokes.add(stroke);
+          parsedStrokes.add(_withFill(stroke, parsedStrokes));
         }
 
         rxAllStrokes.value = parsedStrokes;
@@ -127,23 +146,13 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
         final receivedStroke =
             Stroke.fromJson(Map<String, dynamic>.from(newStroke));
 
-        if (_awaitingBucketAck && receivedStroke is BucketStroke) {
-          rxAllStrokes.value = List<Stroke>.from(rxAllStrokes.value)
-            ..removeLast();
-          _awaitingBucketAck = false;
-        }
-
-        if (receivedStroke is BucketStroke && receivedStroke.fillPixels.isEmpty) {
-          const canvasSize = Size(_canvasSize, _canvasSize / (16 / 9));
-          receivedStroke.fillPixels = bucketFill(
-            start: receivedStroke.points.first,
-            strokes: rxAllStrokes.value,
-            canvasSize: canvasSize,
-          );
+        if (receivedStroke is BucketStroke &&
+            _consumePendingEcho(receivedStroke)) {
+          return;
         }
 
         rxAllStrokes.value = List<Stroke>.from(rxAllStrokes.value)
-          ..add(receivedStroke);
+          ..add(_withFill(receivedStroke, rxAllStrokes.value));
       } catch (e, stackTrace) {
         developer.log(
           'Error processing drawing:stroke:start event: $e',
@@ -155,8 +164,8 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
 
     _onStrokeLastPointsDrawingEvent = (data) {
       try {
-        final strokeLastPoints =
-            (data as Map<String, dynamic>)['strokeLastPoints'] as List<dynamic>?;
+        final strokeLastPoints = (data
+            as Map<String, dynamic>)['strokeLastPoints'] as List<dynamic>?;
         if (strokeLastPoints == null) return;
 
         final receivedStrokeLastPoints = strokeLastPoints
@@ -185,13 +194,13 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
       }
     };
 
-    SocketManager.instance.onEvent('connect', _onConnectEvent);
+    SocketManager.instance.on(SocketEvents.connect, _onConnectEvent);
     SocketManager.instance
-        .onEvent('drawing:stroke:all', _onAllStrokesDrawingEvent);
+        .on(SocketEvents.drawingStrokeAll, _onAllStrokesDrawingEvent);
     SocketManager.instance
-        .onEvent('drawing:stroke:start', _onStrokeStartDrawingEvent);
-    SocketManager.instance
-        .onEvent('drawing:stroke:lastPoints', _onStrokeLastPointsDrawingEvent);
+        .on(SocketEvents.drawingStrokeStart, _onStrokeStartDrawingEvent);
+    SocketManager.instance.on(
+        SocketEvents.drawingStrokeLastPoints, _onStrokeLastPointsDrawingEvent);
   }
 
   double _calculateScale(BoxConstraints constraints) {
@@ -220,38 +229,66 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
 
   /// Starts a periodic timer to send points to the server
   void _startDrawingPointsBuffer() {
-    Timer.periodic(Duration(milliseconds: _bufferDelay), (_) {
-      _sendBufferedDrawingPoints();
-    });
+    _pointsBufferTimer = Timer.periodic(
+      Duration(milliseconds: _bufferDelay),
+      (_) => _sendBufferedDrawingPoints(),
+    );
   }
 
   void _applyBucketFill(Offset position, double scale) {
-    const canvasSize = Size(_canvasSize, _canvasSize / (16 / 9));
-    final fillPixels = bucketFill(start: position, strokes: rxAllStrokes.value, canvasSize: canvasSize);
     final stroke = BucketStroke(
       points: [position],
       color: strokeColor,
       size: size / scale,
       opacity: opacity,
-      fillPixels: fillPixels,
+      fillPixels: _computeFill(position, rxAllStrokes.value),
     );
 
     rxAllStrokes.value = List<Stroke>.from(rxAllStrokes.value)..add(stroke);
+    _pendingBuckets.add(stroke);
 
-    // Send a lightweight version of the stroke to the server. The
-    // fill pixels are recomputed remotely to avoid very large payloads
-    // which could drop the connection.
-    final serverStroke = stroke.copyWith(fillPixels: []);
-
-    _awaitingBucketAck = true;
-
+    // O servidor recebe o balde sem os pixels: um preenchimento pode ter
+    // dezenas de milhares deles, e o payload derrubaria a conexão. Cada peer
+    // recalcula a partir da mesma lista de strokes.
     final payload = RoomDrawingStartStrokeDTO(
       roomName: widget.roomName,
-      stroke: serverStroke,
+      stroke: stroke.copyWith(fillPixels: const []),
     ).toJson();
-    SocketManager.instance.emit('drawing:stroke:start', payload);
+    SocketManager.instance.emit(SocketEvents.drawingStrokeStart, payload);
   }
 
+  List<Offset> _computeFill(Offset start, List<Stroke> strokes) => bucketFill(
+        start: start,
+        strokes: strokes,
+        canvasSize: DrawingCanvas.logicalSize,
+        backgroundColor: widget.options.backgroundColor,
+      );
+
+  /// Um balde que chegou pela rede sem pixels é preenchido aqui, contra os
+  /// strokes que o antecedem em [previous]. Qualquer outro stroke passa direto.
+  Stroke _withFill(Stroke stroke, List<Stroke> previous) {
+    if (stroke is! BucketStroke || stroke.fillPixels.isNotEmpty) return stroke;
+    return stroke.copyWith(
+      fillPixels: _computeFill(stroke.points.first, previous),
+    );
+  }
+
+  /// Reconhece o eco de um balde aplicado localmente e o retira da fila.
+  ///
+  /// Compara só o que atravessa a rede (ponto, cor, tamanho, opacidade): os
+  /// pixels são descartados antes do envio.
+  bool _consumePendingEcho(BucketStroke echo) {
+    final index = _pendingBuckets.indexWhere(
+      (pending) =>
+          pending.points.first == echo.points.first &&
+          pending.color.toARGB32() == echo.color.toARGB32() &&
+          pending.size == echo.size &&
+          pending.opacity == echo.opacity,
+    );
+    if (index < 0) return false;
+    _pendingBuckets.removeAt(index);
+    return true;
+  }
 
   void _sendDrawingPointsStart() {
     if (rxCurrentStroke.value == null) return;
@@ -261,7 +298,7 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
       stroke: rxCurrentStroke.value!,
     ).toJson();
 
-    SocketManager.instance.emit('drawing:stroke:start', payload);
+    SocketManager.instance.emit(SocketEvents.drawingStrokeStart, payload);
     _pendingPoints.clear();
   }
 
@@ -282,7 +319,7 @@ abstract class DrawingCanvasViewModel extends State<DrawingCanvas> {
       strokeLastPoints: _pendingPoints,
     ).toJson();
 
-    SocketManager.instance.emit('drawing:stroke:lastPoints', payload);
+    SocketManager.instance.emit(SocketEvents.drawingStrokeLastPoints, payload);
     _pendingPoints.clear();
   }
 }
@@ -544,14 +581,16 @@ class _DrawingCanvasPainter extends CustomPainter {
       }
 
       if (stroke is BucketStroke) {
+        // Um path por balde, cacheado por identidade do stroke: desenhar um
+        // retângulo por pixel a cada frame travava o app em preenchimentos
+        // grandes — o painter repinta a cada movimento do ponteiro.
         paint
           ..style = PaintingStyle.fill
-          ..strokeWidth = 1
-          ..isAntiAlias = false
-          ..strokeCap = StrokeCap.square;
-        for (final p in stroke.fillPixels) {
-          canvas.drawRect(Rect.fromLTWH(p.dx, p.dy, 1, 1), paint);
-        }
+          ..isAntiAlias = false;
+        canvas.drawPath(
+          _bucketFillPaths[stroke] ??= bucketFillPath(stroke.fillPixels),
+          paint,
+        );
       }
     }
 
@@ -610,4 +649,3 @@ class _DrawingCanvasPainter extends CustomPainter {
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => true;
 }
-

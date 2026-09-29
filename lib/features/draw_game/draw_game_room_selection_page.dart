@@ -37,7 +37,7 @@ class _DrawGameRoomSelectionPageState extends State<DrawGameRoomSelectionPage> {
   @override
   void dispose() {
     roomController.dispose();
-    SocketManager.instance.offEvent('room:all', _onAllRoomsEvent);
+    SocketManager.instance.off(SocketEvents.roomAll, _onAllRoomsEvent);
     super.dispose();
   }
 
@@ -54,7 +54,7 @@ class _DrawGameRoomSelectionPageState extends State<DrawGameRoomSelectionPage> {
         debugPrint('Unexpected data type: ${data.runtimeType}');
       }
     };
-    SocketManager.instance.onEvent('room:all', _onAllRoomsEvent);
+    SocketManager.instance.on(SocketEvents.roomAll, _onAllRoomsEvent);
   }
 
   void _createRoom() {
@@ -62,7 +62,7 @@ class _DrawGameRoomSelectionPageState extends State<DrawGameRoomSelectionPage> {
     if (roomName.isNotEmpty && roomName.length >= 3) {
       final payload = RoomDTO(roomName: roomName).toJson();
 
-      SocketManager.instance.emit('room:create', payload);
+      SocketManager.instance.emit(SocketEvents.roomCreate, payload);
       roomController.clear();
     }
   }

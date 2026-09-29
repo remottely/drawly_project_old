@@ -15,8 +15,7 @@ void main() {
   };
 
   test('creates NormalStroke from json', () {
-    final json = Map<String, dynamic>.from(baseJson)
-      ..['strokeType'] = 'normal';
+    final json = Map<String, dynamic>.from(baseJson)..['strokeType'] = 'normal';
     final stroke = Stroke.fromJson(json);
     expect(stroke, isA<NormalStroke>());
     expect(stroke.points.length, 2);

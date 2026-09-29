@@ -19,7 +19,7 @@ abstract class MessagesChatViewModel extends State<MessagesChatView> {
   @override
   void dispose() {
     messageController.dispose();
-    SocketManager.instance.offEvent('chat:message', _onNewMessageEvent);
+    SocketManager.instance.off(SocketEvents.chatMessage, _onNewMessageEvent);
     super.dispose();
   }
 
@@ -28,7 +28,7 @@ abstract class MessagesChatViewModel extends State<MessagesChatView> {
       final message = Message.fromJson(data as Map<String, dynamic>);
       rxAllMessages.value = List.from(rxAllMessages.value)..add(message);
     };
-    SocketManager.instance.onEvent('chat:message', _onNewMessageEvent);
+    SocketManager.instance.on(SocketEvents.chatMessage, _onNewMessageEvent);
   }
 
   void sendMessage() {
@@ -42,7 +42,7 @@ abstract class MessagesChatViewModel extends State<MessagesChatView> {
             text: message,
           ).toJson();
 
-      SocketManager.instance.emit('chat:message', payload);
+      SocketManager.instance.emit(SocketEvents.chatMessage, payload);
 
       messageController.clear();
     }

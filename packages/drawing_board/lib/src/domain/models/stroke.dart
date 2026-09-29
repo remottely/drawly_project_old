@@ -418,10 +418,13 @@ class BucketStroke extends Stroke {
     this.fillPixels = const [],
   }) : super(strokeType: StrokeType.bucket);
 
-  /// Pixels that were filled when the bucket stroke was created.
-  /// These coordinates are stored to keep the fill static even when
-  /// additional strokes are added to the canvas.
-  List<Offset> fillPixels;
+  /// Pixels preenchidos quando o balde foi aplicado.
+  ///
+  /// Guardados para o preenchimento continuar estático mesmo quando novos
+  /// strokes entram no canvas. Imutável: o painter cacheia o `Path` derivado
+  /// desta lista por identidade do stroke, e trocar o conteúdo no lugar
+  /// deixaria o cache e o desenho fora de sincronia. Use [copyWith].
+  final List<Offset> fillPixels;
 
   @override
   BucketStroke copyWith({
@@ -449,8 +452,7 @@ class BucketStroke extends Stroke {
       'size': size,
       'opacity': opacity,
       'strokeType': strokeType.toString(),
-      'fillPixels':
-          fillPixels.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
+      'fillPixels': fillPixels.map((p) => {'dx': p.dx, 'dy': p.dy}).toList(),
     };
   }
 }

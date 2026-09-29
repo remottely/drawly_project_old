@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [master, development]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dart:
+    name: Dart — analyze, test, coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolver dependências
+        run: |
+          for module in . packages/drawly_core packages/drawly_design_system packages/drawing_board; do
+            (cd "$module" && flutter pub get)
+          done
+
+      - name: Formatação
+        run: |
+          for module in . packages/drawly_core packages/drawly_design_system packages/drawing_board; do
+            (cd "$module" && dart format --output=none --set-exit-if-changed lib test)
+          done
+
+      - name: Análise estática
+        run: |
+          for module in . packages/drawly_core packages/drawly_design_system packages/drawing_board; do
+            (cd "$module" && flutter analyze --no-fatal-infos)
+          done
+
+      - name: Invariantes de arquitetura
+        run: ./scripts/check_architecture.sh
+
+      - name: Testes
+        run: |
+          for module in . packages/drawly_core packages/drawly_design_system packages/drawing_board; do
+            (cd "$module" && flutter test --reporter=expanded)
+          done
+
+      - name: Diffs de golden que falharam
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-failures
+          path: packages/drawing_board/test/**/failures/
+          if-no-files-found: ignore
+
+  go:
+    name: Go — vet, test com -race
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+
+      - name: Formatação
+        run: |
+          unformatted="$(gofmt -l src)"
+          if [ -n "$unformatted" ]; then
+            echo "Arquivos fora do formato:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./src/...
+
+      # -race não é opcional: foi ele que revelou a corrida no estado do jogo.
+      - name: Testes com detector de corrida
+        run: go test -race -coverprofile=coverage.out ./src/...
+
+      - name: Resumo de cobertura
+        run: go tool cover -func=coverage.out | tail -1
+
+  coverage:
+    name: Piso de cobertura
+    runs-on: ubuntu-latest
+    needs: [dart, go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-go/go.mod
+      - name: Resolver dependências
+        run: |
+          for module in . packages/drawly_core packages/drawly_design_system packages/drawing_board; do
+            (cd "$module" && flutter pub get)
+          done
+      - name: Verificar pisos
+        run: ./scripts/coverage.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore

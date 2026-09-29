@@ -56,8 +56,8 @@ abstract class GamePageViewModel extends State<DrawGameRoomPage> {
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent('connect', _onConnectEvent);
-    SocketManager.instance.offEvent('game:turn:new', _onNewTurnEvent);
+    SocketManager.instance.off(SocketEvents.connect, _onConnectEvent);
+    SocketManager.instance.off(SocketEvents.gameTurnNew, _onNewTurnEvent);
     _leaveRoom();
     rxCurrentDrawerUserId.dispose();
     rxIsCurrentDrawerUserId.dispose();
@@ -95,8 +95,8 @@ abstract class GamePageViewModel extends State<DrawGameRoomPage> {
 
       startCountdown(rxTotalDuration.value);
     };
-    SocketManager.instance.onEvent('connect', _onConnectEvent);
-    SocketManager.instance.onEvent('game:turn:new', _onNewTurnEvent);
+    SocketManager.instance.on(SocketEvents.connect, _onConnectEvent);
+    SocketManager.instance.on(SocketEvents.gameTurnNew, _onNewTurnEvent);
   }
 
   void startCountdown(int durationInMs) {
@@ -131,7 +131,7 @@ abstract class GamePageViewModel extends State<DrawGameRoomPage> {
 
     try {
       final responseData = await SocketManager.instance.emitWithAck(
-        'room:join',
+        SocketEvents.roomJoin,
         payload,
       );
       if (responseData['success'] == false) {
@@ -162,7 +162,7 @@ abstract class GamePageViewModel extends State<DrawGameRoomPage> {
           isLogged: false,
         ).toJson();
 
-    SocketManager.instance.emit('room:leave', payload);
+    SocketManager.instance.emit(SocketEvents.roomLeave, payload);
   }
 }
 
@@ -320,7 +320,8 @@ class _DrawGameRoomPageState extends GamePageViewModel {
 
                                                           SocketManager.instance
                                                               .emit(
-                                                                'game:turns:start',
+                                                                SocketEvents
+                                                                    .gameTurnsStart,
                                                                 payload,
                                                               );
                                                         },

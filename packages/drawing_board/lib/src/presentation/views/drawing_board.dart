@@ -58,7 +58,7 @@ class _DrawingBoardState extends State<DrawingBoard>
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent('game:turn:new', _onNewTurnEvent);
+    SocketManager.instance.off(SocketEvents.gameTurnNew, _onNewTurnEvent);
     super.dispose();
   }
 
@@ -80,7 +80,7 @@ class _DrawingBoardState extends State<DrawingBoard>
       rxAllStrokes.value = [];
       rxIsShowGrid.value = false;
     };
-    SocketManager.instance.onEvent('game:turn:new', _onNewTurnEvent);
+    SocketManager.instance.on(SocketEvents.gameTurnNew, _onNewTurnEvent);
   }
 
   @override

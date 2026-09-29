@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide Image;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 class CanvasSideBar extends StatefulWidget {
   const CanvasSideBar({
@@ -56,9 +55,9 @@ abstract class CanvasSideBarViewModel extends State<CanvasSideBar> {
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent('drawing:clear', _onClearDrawingEvent);
-    SocketManager.instance.offEvent('drawing:undo', _onUndoDrawingEvent);
-    SocketManager.instance.offEvent('drawing:redo', _onRedoDrawingEvent);
+    SocketManager.instance.off(SocketEvents.drawingClear, _onClearDrawingEvent);
+    SocketManager.instance.off(SocketEvents.drawingUndo, _onUndoDrawingEvent);
+    SocketManager.instance.off(SocketEvents.drawingRedo, _onRedoDrawingEvent);
     super.dispose();
   }
 
@@ -72,9 +71,9 @@ abstract class CanvasSideBarViewModel extends State<CanvasSideBar> {
     _onRedoDrawingEvent = (_) {
       widget.undoRedoStack.redo();
     };
-    SocketManager.instance.onEvent('drawing:clear', _onClearDrawingEvent);
-    SocketManager.instance.onEvent('drawing:undo', _onUndoDrawingEvent);
-    SocketManager.instance.onEvent('drawing:redo', _onRedoDrawingEvent);
+    SocketManager.instance.on(SocketEvents.drawingClear, _onClearDrawingEvent);
+    SocketManager.instance.on(SocketEvents.drawingUndo, _onUndoDrawingEvent);
+    SocketManager.instance.on(SocketEvents.drawingRedo, _onRedoDrawingEvent);
   }
 
   void _sendClearStrokes() {
@@ -82,7 +81,7 @@ abstract class CanvasSideBarViewModel extends State<CanvasSideBar> {
       roomName: widget.roomName,
     ).toJson();
 
-    SocketManager.instance.emit('drawing:clear', payload);
+    SocketManager.instance.emit(SocketEvents.drawingClear, payload);
   }
 
   void _sendUndoStroke() {
@@ -90,7 +89,7 @@ abstract class CanvasSideBarViewModel extends State<CanvasSideBar> {
       roomName: widget.roomName,
     ).toJson();
 
-    SocketManager.instance.emit('drawing:undo', payload);
+    SocketManager.instance.emit(SocketEvents.drawingUndo, payload);
   }
 
   void _sendRedoStroke() {
@@ -98,7 +97,7 @@ abstract class CanvasSideBarViewModel extends State<CanvasSideBar> {
       roomName: widget.roomName,
     ).toJson();
 
-    SocketManager.instance.emit('drawing:redo', payload);
+    SocketManager.instance.emit(SocketEvents.drawingRedo, payload);
   }
 }
 
@@ -128,7 +127,7 @@ class _CanvasSideBarState extends CanvasSideBarViewModel {
             DrawlyBarGrid(
               children: [
                 _IconBox(
-                  iconData: FontAwesomeIcons.pencil,
+                  iconData: Icons.edit_outlined,
                   selected: widget.rxDrawingTool.value == DrawingTool.pencil,
                   onTap: () => widget.rxDrawingTool.value = DrawingTool.pencil,
                   tooltip: 'Pencil',
@@ -151,13 +150,13 @@ class _CanvasSideBarState extends CanvasSideBarViewModel {
                   ),
                 ),
                 _IconBox(
-                  iconData: FontAwesomeIcons.square,
+                  iconData: Icons.crop_square,
                   selected: widget.rxDrawingTool.value == DrawingTool.square,
                   onTap: () => widget.rxDrawingTool.value = DrawingTool.square,
                   tooltip: 'Square',
                 ),
                 _IconBox(
-                  iconData: FontAwesomeIcons.circle,
+                  iconData: Icons.circle_outlined,
                   selected: widget.rxDrawingTool.value == DrawingTool.circle,
                   onTap: () => widget.rxDrawingTool.value = DrawingTool.circle,
                   tooltip: 'Circle',
@@ -169,13 +168,13 @@ class _CanvasSideBarState extends CanvasSideBarViewModel {
                   tooltip: 'Polygon',
                 ),
                 _IconBox(
-                  iconData: FontAwesomeIcons.bucket,
+                  iconData: Icons.format_color_fill,
                   selected: widget.rxDrawingTool.value == DrawingTool.bucket,
                   onTap: () => widget.rxDrawingTool.value = DrawingTool.bucket,
                   tooltip: 'Bucket',
                 ),
                 _IconBox(
-                  iconData: FontAwesomeIcons.eraser,
+                  iconData: Icons.auto_fix_normal,
                   selected: widget.rxDrawingTool.value == DrawingTool.eraser,
                   onTap: () => widget.rxDrawingTool.value = DrawingTool.eraser,
                   tooltip: 'Eraser',
@@ -389,7 +388,7 @@ class _CanvasSideBarState extends CanvasSideBarViewModel {
             DrawlyBarGrid(
               children: [
                 _IconBox(
-                  iconData: FontAwesomeIcons.ruler,
+                  iconData: Icons.straighten,
                   selected: widget.rxIsShowGrid.value,
                   onTap: () =>
                       widget.rxIsShowGrid.value = !widget.rxIsShowGrid.value,

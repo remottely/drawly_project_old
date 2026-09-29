@@ -1,7 +1,5 @@
 package main
 
-import "github.com/zishang520/socket.io/v2/socket"
-
 var (
 	rooms        = make(map[string]*Room)
 	roomDrawings = make(map[string]*Drawing)
@@ -16,15 +14,21 @@ func newRoom(name string) *Room {
 	}
 }
 
-func createRoom(io *socket.Server, client *socket.Socket, roomName string) {
+// createRoom registra uma sala nova, se ainda não existir.
+//
+// Requer stateMu.
+func createRoom(io Broadcaster, client ClientConn, roomName string) {
 	if _, exists := rooms[roomName]; !exists {
 		rooms[roomName] = newRoom(roomName)
 		roomDrawings[roomName] = &Drawing{}
 		emitRoomList(io) // Atualiza a lista de salas
-		client.Emit("room:created", map[string]interface{}{"roomName": roomName})
+		client.Emit(EventRoomCreated, map[string]interface{}{"roomName": roomName})
 	}
 }
 
+// deleteRoom remove a sala e libera seus recursos.
+//
+// Requer stateMu.
 func deleteRoom(roomName string) {
 	room, exists := rooms[roomName]
 	if exists {
@@ -35,6 +39,9 @@ func deleteRoom(roomName string) {
 	}
 }
 
+// getRoomNames lista os nomes das salas ativas.
+//
+// Requer stateMu.
 func getRoomNames() []string {
 	names := make([]string, 0, len(rooms))
 	for name := range rooms {

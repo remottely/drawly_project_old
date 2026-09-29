@@ -32,8 +32,8 @@ class _AllParticipantsState extends State<AllParticipants> {
 
   @override
   void dispose() {
-    SocketManager.instance.offEvent(
-      'room:participants:update',
+    SocketManager.instance.off(
+      SocketEvents.roomParticipantsUpdate,
       _onUpdateRoomParticipantsEvent,
     );
     rxAllParticipants.dispose();
@@ -66,8 +66,8 @@ class _AllParticipantsState extends State<AllParticipants> {
       }
     };
 
-    SocketManager.instance.onEvent(
-      'room:participants:update',
+    SocketManager.instance.on(
+      SocketEvents.roomParticipantsUpdate,
       _onUpdateRoomParticipantsEvent,
     );
   }

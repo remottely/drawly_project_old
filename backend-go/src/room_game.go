@@ -2,8 +2,6 @@ package main
 
 import (
 	"time"
-
-	"github.com/zishang520/socket.io/v2/socket"
 )
 
 var wordsList = []string{
@@ -14,6 +12,10 @@ var wordsList = []string{
 	// "futebol", "bola", "cama", "travesseiro", "cobertor", "chave", "porta",
 }
 
+// afterFunc é o agendador usado pelo jogo. É uma variável de pacote para que o
+// teste possa substituir o relógio real por um controlado, em vez de dormir.
+var afterFunc = time.AfterFunc
+
 func chooseRandomWord() string {
 	if len(wordsList) == 0 {
 		return "Nenhuma palavra disponível."
@@ -22,7 +24,12 @@ func chooseRandomWord() string {
 	return wordsList[randomIndex]
 }
 
-func startTurnTimer(io *socket.Server, roomName string, totalDuration uint32) {
+// startTurnTimer encerra o turno atual e inicia o próximo.
+//
+// Requer stateMu: é chamada pelos handlers (que já travam) e pelos callbacks de
+// timer (que travam via withState). Não adquire o lock por conta própria — o
+// mutex não é reentrante e ela chama a si mesma pelo timer.
+func startTurnTimer(io Broadcaster, roomName string, totalDuration uint32) {
 	room, exists := rooms[roomName]
 	if !exists {
 		return
@@ -45,7 +52,7 @@ func startTurnTimer(io *socket.Server, roomName string, totalDuration uint32) {
 	wordToDraw := chooseRandomWord()
 	room.CurrentWord = wordToDraw
 
-	io.To(socket.Room(roomName)).Emit("game:turn:new", Turn{
+	io.ToRoom(roomName, EventGameTurnNew, Turn{
 		Word:                  wordToDraw,
 		Turn:                  room.TurnCount,
 		TotalDuration:         totalDuration * 1000,
@@ -54,14 +61,17 @@ func startTurnTimer(io *socket.Server, roomName string, totalDuration uint32) {
 		IsGameStarted:         room.IsGameStarted,
 	})
 
-	io.To(socket.Room(roomName)).Emit("room:participants:update", map[string]any{
+	io.ToRoom(roomName, EventRoomParticipantsUpdate, map[string]any{
 		"participants": room.getParticipants(),
 	})
 
 	// Configura o novo timer
-	room.ActiveTimer = time.AfterFunc(time.Duration(totalDuration)*time.Second, func() {
-		logInfo("Timer executado para a sala %s.\n", roomName)
-		startTurnTimer(io, roomName, totalDuration)
+	room.ActiveTimer = afterFunc(time.Duration(totalDuration)*time.Second, func() {
+		// Roda em goroutine própria: precisa adquirir o lock do estado.
+		withState(func() {
+			logInfo("Timer executado para a sala %s.\n", roomName)
+			startTurnTimer(io, roomName, totalDuration)
+		})
 	})
 	logInfo("Novo timer configurado para a sala %s.\n", roomName)
 }

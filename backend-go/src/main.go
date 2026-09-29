@@ -14,17 +14,19 @@ import (
 )
 
 const (
-	Version = "0.51.5"
+	Version = "0.54.0"
 )
 
 func main() {
 	log.DEBUG = true
 	io := setupServer()
+	broadcaster := newBroadcaster(io)
 	io.On("connection", func(clients ...any) {
 		client := clients[0].(*socket.Socket)
-		fmt.Printf("Client connected: %s", string(client.Id()))
+		conn := newClientConn(client)
+		fmt.Printf("Client connected: %s", conn.ID())
 
-		handleConnection(io, client)
+		handleConnection(broadcaster, conn)
 	})
 	handleGracefulShutdown(io)
 }

@@ -1,29 +1,53 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:drawly_core/src/config/app_config.dart';
+import 'package:drawly_core/src/contracts/socket_events.dart';
+import 'package:drawly_core/src/realtime/realtime_gateway.dart';
+import 'package:meta/meta.dart';
 import 'package:socket_io_client/socket_io_client.dart' as socket_io_client;
 
-class SocketManager {
+/// Implementação de [RealtimeGateway] sobre `socket_io_client`.
+///
+/// A instância é **lazy** e substituível: enquanto ninguém acessar
+/// [SocketManager.instance], nenhum socket é aberto. É isso que permite a um
+/// teste injetar um fake antes do primeiro acesso e nunca tocar a rede.
+class SocketManager implements RealtimeGateway {
   SocketManager._internal() {
     _initializeSocket();
   }
-  static final SocketManager _instance = SocketManager._internal();
-  static SocketManager get instance => _instance;
+
+  static RealtimeGateway? _instance;
+
+  /// Gateway em uso pelo app.
+  ///
+  /// Construído sob demanda no primeiro acesso, ou substituído por
+  /// [setInstanceForTesting].
+  static RealtimeGateway get instance =>
+      _instance ??= SocketManager._internal();
+
+  /// Substitui o gateway global. Apenas para teste.
+  @visibleForTesting
+  // ignore: use_setters_to_change_properties
+  static void setInstanceForTesting(RealtimeGateway gateway) {
+    _instance = gateway;
+  }
+
+  /// Restaura o gateway global ao estado não inicializado. Apenas para teste.
+  @visibleForTesting
+  static void resetInstanceForTesting() {
+    _instance = null;
+  }
 
   late final socket_io_client.Socket _socket;
-  final Map<String, List<void Function(dynamic)>> _eventListeners = {};
+  final Map<String, List<RealtimeListener>> _eventListeners = {};
 
-  void _onConnect() {
-    developer.log('Connected to server');
-  }
-
-  void _onDisconnect() {
-    developer.log('Disconnected from server');
-  }
+  @override
+  bool get isConnected => _socket.connected;
 
   void _initializeSocket() {
     _socket = socket_io_client.io(
-      'http://localhost:5555',
+      AppConfig.realtimeUrl,
       socket_io_client.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
@@ -31,106 +55,115 @@ class SocketManager {
           .build(),
     );
 
-    _socket.io.options?['reconnectionAttempts'] = 5;
-    _socket.io.options?['reconnectionDelay'] = 2000;
-    _socket.io.options?['reconnectionDelayMax'] = 5000;
+    _socket.io.options?['reconnectionAttempts'] =
+        AppConfig.reconnectionAttempts;
+    _socket.io.options?['reconnectionDelay'] =
+        AppConfig.reconnectionDelay.inMilliseconds;
+    _socket.io.options?['reconnectionDelayMax'] =
+        AppConfig.reconnectionDelayMax.inMilliseconds;
 
-    onEvent('connect', (_) => _onConnect());
-    onEvent('disconnect', (_) => _onDisconnect());
+    on(SocketEvents.connect, (_) => developer.log('Connected to server'));
+    on(
+      SocketEvents.disconnect,
+      (_) => developer.log('Disconnected from server'),
+    );
 
     connect();
   }
 
+  @override
   void connect() {
     if (!_socket.connected) {
       _socket.connect();
     }
   }
 
+  @override
   void disconnect() {
     if (_socket.connected) {
       _socket.disconnect();
     }
   }
 
-  /// Register a callback for a specific event
-  void onEvent(String event, void Function(dynamic) callback) {
-    _eventListeners.putIfAbsent(event, () => []);
+  @override
+  void on(String event, RealtimeListener listener) {
+    final listeners = _eventListeners.putIfAbsent(event, () => [])
+      ..add(listener);
 
-    // Add the callback to the list
-    _eventListeners[event]!.add(callback);
-
-    // Register the event with the socket only once
-    if (_eventListeners[event]!.length == 1) {
+    // Registra no socket apenas uma vez por evento; o fan-out é nosso, para que
+    // [off] possa remover um listener específico sem derrubar os demais.
+    if (listeners.length == 1) {
       _socket.on(event, (data) {
-        for (final listener in _eventListeners[event]!) {
+        // Cópia defensiva: um listener pode se remover durante o despacho.
+        for (final listener in List<RealtimeListener>.from(
+          _eventListeners[event] ?? const [],
+        )) {
           listener(data);
         }
       });
     }
   }
 
-  /// Remove a specific callback from an event
-  void offEvent(String event, void Function(dynamic) callback) {
-    if (_eventListeners[event] != null) {
-      _eventListeners[event]!.remove(callback);
+  @override
+  void off(String event, RealtimeListener listener) {
+    final listeners = _eventListeners[event];
+    if (listeners == null) return;
 
-      // If no callbacks are left, remove the event listener from the socket
-      if (_eventListeners[event]!.isEmpty) {
-        _eventListeners.remove(event);
-        _socket.off(event);
-      }
+    listeners.remove(listener);
+
+    if (listeners.isEmpty) {
+      _eventListeners.remove(event);
+      _socket.off(event);
     }
   }
 
-  /// Emit an event to the server
-  void emit(String event, dynamic data) {
-    _socket.emit(event, data);
+  @override
+  void emit(String event, Map<String, dynamic> payload) {
+    _socket.emit(event, payload);
   }
 
+  @override
   Future<Map<String, dynamic>> emitWithAck(
     String event,
-    dynamic data, {
-    Duration timeout = const Duration(seconds: 10),
-  }) async {
+    Map<String, dynamic> payload, {
+    Duration timeout = AppConfig.ackTimeout,
+  }) {
     final completer = Completer<Map<String, dynamic>>();
 
-    try {
-      _socket.emitWithAck(
-        event,
-        data,
-        ack: (dynamic response) {
-          if (response is Map<String, dynamic>) {
-            completer.complete(response);
-          } else {
-            completer.completeError(
-              'Invalid response format: Expected Map<String, dynamic>',
-            );
-          }
-        },
-      );
+    // Guardado para ser cancelado no ack: sem isso, cada chamada segura um
+    // timer vivo até o fim do timeout mesmo em caso de sucesso.
+    late final Timer timeoutTimer;
 
-      // Timeout para evitar travamento caso não haja resposta
-      Future.delayed(timeout, () {
-        if (!completer.isCompleted) {
-          completer
-              .completeError('Timeout: No response received for event $event');
+    timeoutTimer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(RealtimeTimeoutException(event, timeout));
+      }
+    });
+
+    _socket.emitWithAck(
+      event,
+      payload,
+      ack: (dynamic response) {
+        timeoutTimer.cancel();
+        if (completer.isCompleted) return;
+
+        if (response is Map<String, dynamic>) {
+          completer.complete(response);
+        } else {
+          completer.completeError(RealtimeProtocolException(event, response));
         }
-      });
+      },
+    );
 
-      return await completer.future;
-    } catch (e) {
-      completer.completeError('Error while emitting event: $e');
-      rethrow;
-    }
+    return completer.future;
   }
 
-  /// Clear all listeners (use with caution)
-  void clearListeners() {
-    _eventListeners
-      ..forEach((event, _) {
-        _socket.off(event);
-      })
-      ..clear();
+  @override
+  Future<void> dispose() async {
+    for (final event in _eventListeners.keys) {
+      _socket.off(event);
+    }
+    _eventListeners.clear();
+    _socket.dispose();
   }
 }

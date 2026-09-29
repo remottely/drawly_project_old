@@ -1,6 +1,6 @@
 name: drawing_board
 description: "A new Flutter package project."
-version: 0.51.5
+version: 0.54.0
 homepage:
 
 publish_to: none
@@ -14,17 +14,11 @@ dependencies:
     path: ../drawly_core
   drawly_design_system:
     path: ../drawly_design_system
-  file_picker: ^9.0.1
-  file_saver: ^0.2.9
   flutter:
     sdk: flutter
   flutter_colorpicker: ^1.1.0
   flutter_svg: ^2.0.9
-  font_awesome_flutter: ^10.6.0
-  image_picker: ^1.0.4
-  universal_html: ^2.2.4
   universal_platform: ^1.1.0
-  url_launcher: ^6.2.1
 
 dev_dependencies:
   flutter_lints: ^5.0.0

@@ -1,5 +1,4 @@
 import 'package:drawing_board/drawing_board.dart';
-import 'package:drawly_design_system/drawly_design_system.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

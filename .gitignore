@@ -46,3 +46,9 @@ app.*.map.json
 
 # FVM Version Cache
 .fvm/
+# Relatórios de cobertura gerados por scripts/coverage.sh
+/coverage/
+coverage/lcov.info
+
+# Cobertura gerada por módulo
+packages/*/coverage/

@@ -5,7 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('bucket stroke keeps fill after new strokes are added', () {
     final border = NormalStroke(
-      points: const [Offset(0, 0), Offset(4, 0), Offset(4, 4), Offset(0, 4), Offset(0, 0)],
+      points: const [
+        Offset(0, 0),
+        Offset(4, 0),
+        Offset(4, 4),
+        Offset(0, 4),
+        Offset(0, 0)
+      ],
       color: Colors.black,
     );
 
